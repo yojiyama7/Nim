@@ -445,9 +445,8 @@ proc passCopyToSink(n: PNode; c: var Con; s: var Scope): PNode =
   result = newNodeIT(nkStmtListExpr, n.info, n.typ)
   let nTyp = n.typ.skipTypes(tyUserTypeClasses)
   let tmp = c.getTemp(s, nTyp, n.info)
-  let typ = nTyp.skipTypes({tyGenericInst, tyAlias, tySink})
-  if hasDestructor(c, nTyp) or (c.graph.config.selectedGC == gcRefc and
-      typ.kind == tyObject and getAttachedOp(c.graph, typ, attachedDup) != nil):
+  if hasDestructor(c, nTyp):
+    let typ = nTyp.skipTypes({tyGenericInst, tyAlias, tySink})
     let op = getAttachedOp(c.graph, typ, attachedDup)
     if op != nil and tfHasOwned notin typ.flags:
       if sfError in op.flags:
@@ -817,6 +816,16 @@ proc p(n: PNode; c: var Con; s: var Scope; mode: ProcessMode; tmpFlags = {sfSing
       result[0] = p(n[0], c, s, sinkArg)
     elif n.typ == nil:
       # 'raise X' can be part of a 'case' expression. Deal with it here:
+      result = p(n, c, s, normal)
+    elif c.graph.config.selectedGC == gcRefc and
+        n.kind == nkDerefExpr and
+        n.typ.skipTypes({tyGenericInst, tyAlias, tySink}).kind == tyObject and
+        c.owner.kind == skModule and
+        n[0].typ.skipTypes({tyGenericInst, tyAlias, tySink}).kind == tyRef and
+        not hasDestructor(c, n.typ.skipTypes({tyGenericInst, tyAlias, tySink})):
+      # TODO: fixme still a hole sink in refc
+      # workaround: let a: ref A = new(B) in the global scope: `sink a` causes troubles
+      # perhaps introduce a flag so that genericAssign could ignore ObjectAssignmentDefect
       result = p(n, c, s, normal)
     else:
       # copy objects that are not temporary but passed to a 'sink' parameter
